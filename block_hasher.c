@@ -123,7 +123,7 @@ void *thread_func(void *arg)
     md = EVP_sha1();
     mdctx = EVP_MD_CTX_create();
     EVP_DigestInit_ex( mdctx, md, NULL );
-    for( i = 0; i < 10; i++)
+    for( i = 0; i < nset; i++)
     {
         offset = t->off + gap * i;
 
