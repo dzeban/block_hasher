@@ -37,7 +37,7 @@
 #include <fcntl.h>
 
 #include <pthread.h>
-#include <openssl/sha.h>
+#include <openssl/evp.h>
 
 #define OPTSTR "d:b:t:h"
 #define DEV_PATH_LEN 64
@@ -73,12 +73,20 @@ struct block_device
 struct thread
 {
     pthread_t id;
-    struct block_device *bdev;
     int num;
     off_t off;
-    int block_size;
-    int num_threads;
+    unsigned char digest[EVP_MAX_MD_SIZE];
+    unsigned int digest_len;
 };
+
+// Global parameters
+int block_size;
+int num_threads;
+
+// Shared variables
+struct block_device *bdev;
+FILE *file;
+pthread_mutex_t file_mutex;
 
 // ============================================================================
 
@@ -94,24 +102,33 @@ void *thread_func(void *arg)
     struct thread *t = arg;
     long nblocks, nset, i;
     off_t offset, gap;
-    unsigned char *buf;
+    char *buf;
     int err;
+    EVP_MD_CTX *mdctx;
+    const EVP_MD *md;
 
-    buf = malloc(t->block_size);
+    buf = malloc(block_size);
     if( !buf )
     {
         fprintf(stderr, "Failed to allocate buffers\n");
         pthread_exit(NULL);
     }
 
-    nblocks = t->bdev->size / t->block_size;
-    nset = nblocks / t->num_threads;
+    // Calculate helpers
+    nblocks = bdev->size / block_size;
+    nset = nblocks / num_threads;
+    gap = num_threads * block_size; // Multiply here to avoid integer overflow
 
-    gap = t->num_threads * t->block_size; // Multiply here to avoid integer overflow
-    for( i = 0; i < nset; i++)
+    // Initialize EVP and start reading
+    md = EVP_sha1();
+    mdctx = EVP_MD_CTX_create();
+    EVP_DigestInit_ex( mdctx, md, NULL );
+    for( i = 0; i < 10; i++)
     {
         offset = t->off + gap * i;
-        err = pread( t->bdev->fd, buf, t->block_size, offset );
+
+        // Read at offset without changing file pointer
+        err = pread( bdev->fd, buf, block_size, offset );
         if( err == -1 )
         {
             fprintf(stderr, "T%02d Failed to read at %llu\n", t->num, (unsigned long long)offset);
@@ -119,8 +136,22 @@ void *thread_func(void *arg)
             pthread_exit(NULL);
         }
 
-        SHA1(buf, t->block_size, NULL);
+        // Update digest
+        EVP_DigestUpdate( mdctx, buf, block_size );
     }
+    EVP_DigestFinal_ex( mdctx, t->digest, &t->digest_len );
+    EVP_MD_CTX_destroy(mdctx);
+
+    // Print digest under lock
+    pthread_mutex_lock( &file_mutex );
+    i = 0;
+    fprintf(file, "T%02d: ", t->num);
+    while(i++ < t->digest_len) 
+    {
+        fprintf(file, "%02x", t->digest[i]);
+    }
+    fprintf(file, "\n");
+    pthread_mutex_unlock( &file_mutex );
 
     free(buf);
     return NULL;
@@ -130,33 +161,33 @@ void *thread_func(void *arg)
 
 struct block_device *bdev_open( char *dev_path )
 {
-    struct block_device *bdev;
-    bdev = malloc(sizeof(*bdev));
+    struct block_device *dev;
+    dev = malloc(sizeof(*dev));
 
-    bdev->fd = open( dev_path, O_RDONLY );
-    if( bdev->fd == -1 )
+    dev->fd = open( dev_path, O_RDONLY );
+    if( dev->fd == -1 )
     {
         perror("open");
         return 0;
     }
 
-    bdev->size = lseek(bdev->fd, 0, SEEK_END);
-    if( bdev->size == -1 )
+    dev->size = lseek(dev->fd, 0, SEEK_END);
+    if( dev->size == -1 )
     {
         perror("lseek");
         return NULL;
     }
 
-    return bdev;
+    return dev;
 }
 
 // ============================================================================
 
-void bdev_close( struct block_device *bdev )
+void bdev_close( struct block_device *dev )
 {
     int err;
 
-    err = close( bdev->fd );
+    err = close( dev->fd );
     if( err == -1 )
     {
         perror("close");
@@ -169,17 +200,15 @@ void bdev_close( struct block_device *bdev )
 
 int main(int argc, char *argv[])
 {
-    int opt;
-    struct block_device *bdev;
     char dev_path[DEV_PATH_LEN];
-    long block_size = 0;
-    long num_threads = 0;
+
     bool dev_set = false, block_size_set = false, num_threads_set = false;
     char *errptr;
     struct thread *thread_info;
     pthread_attr_t tattr;
-    int i;
     int err;
+    int opt;
+    int i;
 
     // --------------------------------------------
     // Parse arguments
@@ -220,7 +249,6 @@ int main(int argc, char *argv[])
         usage();
         return EXIT_FAILURE;
     }
-    printf("dev_path %s, block_size %ld, num_threads %ld\n", dev_path, block_size, num_threads);
 
     // ------------------------
     // Open block device
@@ -230,7 +258,16 @@ int main(int argc, char *argv[])
     {
         return EXIT_FAILURE;
     }
-    printf("bdev: %d, %zu\n", bdev->fd, bdev->size);
+    
+    // ------------------------
+    // Open output file
+    // ------------------------
+    file = fopen("digest.out", "w");
+    if( file == NULL )
+    {
+        perror("fopen");
+        return EXIT_FAILURE;
+    }
 
     // --------------------------------------------------------
     // Create and run threads
@@ -246,13 +283,13 @@ int main(int argc, char *argv[])
     err = pthread_attr_init( &tattr );
     pthread_handle(err, "pthread_attr_init");
 
+    err = pthread_mutex_init(&file_mutex, NULL);
+    pthread_handle(err, "pthread_mutex_init");
+
     for( i = 0; i < num_threads; i++ )
     {
-        thread_info[i].bdev = bdev;
         thread_info[i].num = i;
         thread_info[i].off = i * block_size;
-        thread_info[i].block_size = block_size;
-        thread_info[i].num_threads = num_threads;
         
         err = pthread_create( &thread_info[i].id, 
                               &tattr, 
@@ -266,12 +303,11 @@ int main(int argc, char *argv[])
     {
         err = pthread_join( thread_info[i].id, NULL );
         pthread_handle(err, "pthread_join");
-
-        printf("Thread %d joined\n", i);
     }
 
     // Housekeeping
     bdev_close( bdev );
+    fclose(file);
     free(thread_info);
     pthread_attr_destroy( &tattr );
     return EXIT_SUCCESS;
