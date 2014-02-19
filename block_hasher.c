@@ -4,9 +4,6 @@
  * This file contains __testing__ program `block_hasher` that reads block device
  * in multiple threads and calculates hashes on blocks of given size.
  *
- * Usage:
- * ./block_hasher -d <device> -b <block size> -t <thread number>
- *  
  * Copyright (c) 2014 Alex Dzyoba <avd@reduct.ru>
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -35,11 +32,12 @@
 #include <errno.h>
 #include <stdbool.h>
 #include <fcntl.h>
+#include <time.h>
 
 #include <pthread.h>
 #include <openssl/evp.h>
 
-#define OPTSTR "d:b:t:h"
+#define OPTSTR "d:b:t:n:h"
 #define DEV_PATH_LEN 64
 
 // strtol error handling
@@ -56,10 +54,18 @@
         {\
             errno = err;\
             perror(str);\
-            free(thread_info);\
+            free(job_info);\
             pthread_attr_destroy( &tattr );\
             return EXIT_FAILURE;\
         }
+
+#define get_clock( t ) \
+    err = clock_gettime( CLOCK_REALTIME, t );\
+    if( err )\
+    {\
+        perror("clock_gettime");\
+        pthread_exit(NULL);\
+    }
 
 // Store info about opened block device
 struct block_device
@@ -70,18 +76,20 @@ struct block_device
 
 // Information for thread. 
 // Used as thread function argument.
-struct thread
+struct job
 {
     pthread_t id;
     int num;
     off_t off;
     unsigned char digest[EVP_MAX_MD_SIZE];
     unsigned int digest_len;
+    double bps; // Bytes per sec
 };
 
-// Global parameters
-int block_size;
-int num_threads;
+// Global parameters set from arguments
+int block_size = -1;
+int num_threads = -1;
+int num_blocks = -1;
 
 // Shared variables
 struct block_device *bdev;
@@ -92,20 +100,44 @@ pthread_mutex_t file_mutex;
 
 void usage()
 {
-    printf("usage: block_summer -d <device> -b <block size> -t <thread number>\n");
+    printf("usage: block_summer -d <device> -b <block size> -t <thread number> -n [blocks number]\n");
+}
+
+double time_diff(struct timespec start, struct timespec end)
+{
+    struct timespec diff;
+    double sec;
+
+    if ( (end.tv_nsec - start.tv_nsec) < 0 ) 
+    {
+        diff.tv_sec  = end.tv_sec - start.tv_sec - 1;
+        diff.tv_nsec = 1000000000 + end.tv_nsec - start.tv_nsec;
+    } 
+    else 
+    {
+        diff.tv_sec  = end.tv_sec - start.tv_sec;
+        diff.tv_nsec = end.tv_nsec - start.tv_nsec;
+    }
+
+    sec = (double)diff.tv_nsec / 1000000000 + diff.tv_sec;
+
+    return sec;
 }
 
 // ============================================================================
 
 void *thread_func(void *arg)
 {
-    struct thread *t = arg;
-    long nblocks, nset, i;
+    struct job *j = arg;
+    long total_blocks, nblocks, i;
     off_t offset, gap;
     char *buf;
     int err;
     EVP_MD_CTX *mdctx;
     const EVP_MD *md;
+    struct timespec start, end;
+    double sec_diff;
+    unsigned long long bytes = 0;
 
     buf = malloc(block_size);
     if( !buf )
@@ -114,41 +146,56 @@ void *thread_func(void *arg)
         pthread_exit(NULL);
     }
 
-    // Calculate helpers
-    nblocks = bdev->size / block_size;
-    nset = nblocks / num_threads;
+    if( num_blocks != -1 )
+    {
+        nblocks = num_blocks;
+    }
+    else
+    {
+        total_blocks = bdev->size / block_size;
+        nblocks = total_blocks / num_threads;
+    }
+
     gap = num_threads * block_size; // Multiply here to avoid integer overflow
 
     // Initialize EVP and start reading
     md = EVP_sha1();
     mdctx = EVP_MD_CTX_create();
     EVP_DigestInit_ex( mdctx, md, NULL );
-    for( i = 0; i < nset; i++)
+
+    get_clock( &start );
+    for( i = 0; i < nblocks; i++)
     {
-        offset = t->off + gap * i;
+        offset = j->off + gap * i;
 
         // Read at offset without changing file pointer
         err = pread( bdev->fd, buf, block_size, offset );
         if( err == -1 )
         {
-            fprintf(stderr, "T%02d Failed to read at %llu\n", t->num, (unsigned long long)offset);
+            fprintf(stderr, "T%02d Failed to read at %llu\n", j->num, (unsigned long long)offset);
             perror("pread");
             pthread_exit(NULL);
         }
 
+        bytes += err; // On success pread returns bytes read
+
         // Update digest
         EVP_DigestUpdate( mdctx, buf, block_size );
     }
-    EVP_DigestFinal_ex( mdctx, t->digest, &t->digest_len );
+    get_clock( &end );
+    sec_diff = time_diff( start, end );
+
+    EVP_DigestFinal_ex( mdctx, j->digest, &j->digest_len );
     EVP_MD_CTX_destroy(mdctx);
 
-    // Print digest under lock
+    // Write job summary
     pthread_mutex_lock( &file_mutex );
     i = 0;
-    fprintf(file, "T%02d: ", t->num);
-    while(i++ < t->digest_len) 
+    fprintf(file, "T%02d: ", j->num);
+    fprintf(file, "%.2f MB/s ", (double)bytes / sec_diff / 1000000);
+    while(i++ < j->digest_len) 
     {
-        fprintf(file, "%02x", t->digest[i]);
+        fprintf(file, "%02x", j->digest[i]);
     }
     fprintf(file, "\n");
     pthread_mutex_unlock( &file_mutex );
@@ -204,7 +251,7 @@ int main(int argc, char *argv[])
 
     bool dev_set = false, block_size_set = false, num_threads_set = false;
     char *errptr;
-    struct thread *thread_info;
+    struct job *job_info;
     pthread_attr_t tattr;
     int err;
     int opt;
@@ -234,6 +281,11 @@ int main(int argc, char *argv[])
                 num_threads_set = true;
                 break;
 
+            case 'n':
+                num_blocks = strtol(optarg, &errptr, 10);
+                strtol_handle(num_blocks);
+                break;
+
             case 'h':
                 usage();
                 return EXIT_SUCCESS;
@@ -243,7 +295,7 @@ int main(int argc, char *argv[])
                 return EXIT_FAILURE;
         }
     }
-    // All options must be set
+    // Check mandatory options
     if( !( dev_set && block_size_set && num_threads_set ) )
     {
         usage();
@@ -272,11 +324,11 @@ int main(int argc, char *argv[])
     // --------------------------------------------------------
     // Create and run threads
     // --------------------------------------------------------
-    thread_info = calloc( num_threads, sizeof(struct thread) );
-    if( thread_info == NULL )
+    job_info = calloc( num_threads, sizeof(struct job) );
+    if( job_info == NULL )
     {
         fprintf(stderr, "Failed to allocate memory\n");
-        free(thread_info);
+        free(job_info);
         return EXIT_FAILURE;
     }
 
@@ -288,27 +340,27 @@ int main(int argc, char *argv[])
 
     for( i = 0; i < num_threads; i++ )
     {
-        thread_info[i].num = i;
-        thread_info[i].off = i * block_size;
+        job_info[i].num = i;
+        job_info[i].off = i * block_size;
         
-        err = pthread_create( &thread_info[i].id, 
+        err = pthread_create( &job_info[i].id, 
                               &tattr, 
                               &thread_func,
-                              &thread_info[i] );
+                              &job_info[i] );
         pthread_handle(err, "pthread_create");
     }
 
     // Wait for threads to join
     for( i = 0; i < num_threads; i++ )
     {
-        err = pthread_join( thread_info[i].id, NULL );
+        err = pthread_join( job_info[i].id, NULL );
         pthread_handle(err, "pthread_join");
     }
 
     // Housekeeping
     bdev_close( bdev );
     fclose(file);
-    free(thread_info);
+    free(job_info);
     pthread_attr_destroy( &tattr );
     return EXIT_SUCCESS;
 }
