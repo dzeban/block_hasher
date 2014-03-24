@@ -60,7 +60,7 @@
         }
 
 #define get_clock( t ) \
-    err = clock_gettime( CLOCK_REALTIME, t );\
+    err = clock_gettime( CLOCK_MONOTONIC, t );\
     if( err )\
     {\
         perror("clock_gettime");\
@@ -239,6 +239,9 @@ void bdev_close( struct block_device *dev )
     {
         perror("close");
     }
+
+    free(dev);
+    dev = NULL;
 
     return;
 }
