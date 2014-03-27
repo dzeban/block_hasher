@@ -94,7 +94,7 @@ int num_blocks = -1;
 // Shared variables
 struct block_device *bdev;
 FILE *file;
-pthread_mutex_t file_mutex;
+pthread_mutex_t mutex;
 
 // ============================================================================
 
@@ -159,9 +159,11 @@ void *thread_func(void *arg)
     gap = num_threads * block_size; // Multiply here to avoid integer overflow
 
     // Initialize EVP and start reading
+    pthread_mutex_lock( &mutex );
     md = EVP_sha1();
     mdctx = EVP_MD_CTX_create();
     EVP_DigestInit_ex( mdctx, md, NULL );
+    pthread_mutex_unlock( &mutex );
 
     get_clock( &start );
     for( i = 0; i < nblocks; i++)
@@ -172,7 +174,7 @@ void *thread_func(void *arg)
         err = pread( bdev->fd, buf, block_size, offset );
         if( err == -1 )
         {
-            fprintf(stderr, "T%02d Failed to read at %llu\n", j->num, (unsigned long long)offset);
+            fprintf(stderr, "T%02d Failed to read at %zu\n", j->num, offset);
             perror("pread");
             pthread_exit(NULL);
         }
@@ -189,7 +191,7 @@ void *thread_func(void *arg)
     EVP_MD_CTX_destroy(mdctx);
 
     // Write job summary
-    pthread_mutex_lock( &file_mutex );
+    pthread_mutex_lock( &mutex );
     i = 0;
     fprintf(file, "T%02d: ", j->num);
     fprintf(file, "%.2f MB/s ", (double)bytes / sec_diff / 1000000);
@@ -198,7 +200,7 @@ void *thread_func(void *arg)
         fprintf(file, "%02x", j->digest[i]);
     }
     fprintf(file, "\n");
-    pthread_mutex_unlock( &file_mutex );
+    pthread_mutex_unlock( &mutex );
 
     free(buf);
     return NULL;
@@ -338,7 +340,7 @@ int main(int argc, char *argv[])
     err = pthread_attr_init( &tattr );
     pthread_handle(err, "pthread_attr_init");
 
-    err = pthread_mutex_init(&file_mutex, NULL);
+    err = pthread_mutex_init(&mutex, NULL);
     pthread_handle(err, "pthread_mutex_init");
 
     for( i = 0; i < num_threads; i++ )
