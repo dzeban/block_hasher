@@ -1,6 +1,0 @@
-This is a keyboard notifier for Linux kernel.
-Based on keymon - github.com/dzeban/keymon
-
-Keyboard notification is done via simple Linux kernel API with call to
-register_keyboard_notifier informing Linux kernel to invoke our callback
-kb_nf_callback().
