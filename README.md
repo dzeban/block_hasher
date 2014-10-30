@@ -18,4 +18,4 @@ In the end it will print nice text report like this:
     T05: 23.08 MB/s 2d2ee48e62882516e6afe1bb30dc3ef920f09600
 
 I use this tool as profiling subject in my Linux profiling articles at 
-<http://avd.reduct.ru/programming/profiling-intro.html>
+<http://avd.reduct.ru/linux/profiling-intro.html>
