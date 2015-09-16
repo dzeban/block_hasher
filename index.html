@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset='utf-8'>
+    <meta http-equiv="X-UA-Compatible" content="chrome=1">
+    <meta name="viewport" content="width=640">
+
+    <link rel="stylesheet" href="stylesheets/core.css" media="screen">
+    <link rel="stylesheet" href="stylesheets/mobile.css" media="handheld, only screen and (max-device-width:640px)">
+    <link rel="stylesheet" href="stylesheets/github-light.css">
+
+    <script type="text/javascript" src="javascripts/modernizr.js"></script>
+    <script type="text/javascript" src="https://ajax.googleapis.com/ajax/libs/jquery/1.7.1/jquery.min.js"></script>
+    <script type="text/javascript" src="javascripts/headsmart.min.js"></script>
+    <script type="text/javascript">
+      $(document).ready(function () {
+        $('#main_content').headsmart()
+      })
+    </script>
+    <title>Block hasher by dzeban</title>
+  </head>
+
+  <body>
+    <a id="forkme_banner" href="https://github.com/dzeban/block_hasher">View on GitHub</a>
+    <div class="shell">
+
+      <header>
+        <span class="ribbon-outer">
+          <span class="ribbon-inner">
+            <h1>Block hasher</h1>
+            <h2>Block device tester</h2>
+          </span>
+          <span class="left-tail"></span>
+          <span class="right-tail"></span>
+        </span>
+      </header>
+
+      <section id="downloads">
+        <span class="inner">
+          <a href="https://github.com/dzeban/block_hasher/zipball/master" class="zip"><em>download</em> .ZIP</a><a href="https://github.com/dzeban/block_hasher/tarball/master" class="tgz"><em>download</em> .TGZ</a>
+        </span>
+      </section>
+
+
+      <span class="banner-fix"></span>
+
+
+      <section id="main_content">
+        <h1>
+<a id="block_hasher" class="anchor" href="#block_hasher" aria-hidden="true"><span class="octicon octicon-link"></span></a>block_hasher</h1>
+
+<p>Simple tool that tests integrity and performance of block device.</p>
+
+<p>It reads block device in multiple threads in blocks while calculating hash sums and measuring time. 
+In the end it will print nice text report like this:</p>
+
+<pre><code>T04: 23.35 MB/s 6f43a38e979e053adba5be589803e1d21c3efc00
+T09: 23.21 MB/s 0a912bf91ab6aae3118e21c18c80e15cf056db00
+T06: 23.19 MB/s 0d8b5d7cee3bec090ba3a9c7768c05129b394300
+T08: 23.17 MB/s 45e80a3731669b0b549e6d98380dc1314321fb00
+T03: 23.16 MB/s 9a39578dd1b35f873b45121c9f09c87b6e1d9400
+T01: 23.15 MB/s 933a1fba87f333f7bf5f2423cd60500874a8c100
+T02: 23.11 MB/s 2b30307b379311ebb352fbbc6fde42daea385000
+T00: 23.10 MB/s acd0168becc29812d6824763c7a43edbab6f4a00
+T07: 23.10 MB/s 82c5decfb0503cb87c806ca1e6fe7c0ecd0c4b00
+T05: 23.08 MB/s 2d2ee48e62882516e6afe1bb30dc3ef920f09600
+</code></pre>
+
+<p>I use this tool as profiling subject in my Linux profiling articles at 
+<a href="http://avd.reduct.ru/linux/profiling-intro.html">http://avd.reduct.ru/linux/profiling-intro.html</a></p>
+      </section>
+
+      <footer>
+        <span class="ribbon-outer">
+          <span class="ribbon-inner">
+            <p>this project by <a href="https://github.com/dzeban">dzeban</a> can be found on <a href="https://github.com/dzeban/block_hasher">GitHub</a></p>
+          </span>
+          <span class="left-tail"></span>
+          <span class="right-tail"></span>
+        </span>
+        <p>Generated with <a href="https://pages.github.com">GitHub Pages</a> using Merlot</p>
+        <span class="octocat"></span>
+      </footer>
+
+    </div>
+
+    
+  </body>
+</html>
